@@ -1,86 +1,80 @@
-# This workflow will build and push a Python application to an Azure Web App when a commit is pushed to your default branch.
-#
-# This workflow assumes you have already created the target Azure App Service web app.
-# For instructions see https://docs.microsoft.com/en-us/azure/app-service/quickstart-python?tabs=bash&pivots=python-framework-flask
-#
-# To configure this workflow:
-#
-# 1. Download the Publish Profile for your Azure Web App. You can download this file from the Overview page of your Web App in the Azure Portal.
-#    For more information: https://docs.microsoft.com/en-us/azure/app-service/deploy-github-actions?tabs=applevel#generate-deployment-credentials
-#
-# 2. Create a secret in your repository named AZURE_WEBAPP_PUBLISH_PROFILE, paste the publish profile contents as the value of the secret.
-#    For instructions on obtaining the publish profile see: https://docs.microsoft.com/azure/app-service/deploy-github-actions#configure-the-github-secret
-#
-# 3. Change the value for the AZURE_WEBAPP_NAME. Optionally, change the PYTHON_VERSION environment variables below.
-#
-# For more information on GitHub Actions for Azure: https://github.com/Azure/Actions
-# For more information on the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# For more samples to get started with GitHub Action workflows to deploy to Azure: https://github.com/Azure/actions-workflow-samples
+# LAB 6 - CI/CD: realiza o build e a publicacao automatica da aplicacao Python no Azure.
+# Todos os parametros importantes do workflow estao comentados para o exercicio 3.
 
-name: Build and deploy Python app to Azure Web App
+name: Build and deploy Python app to Azure Web App # Nome exibido na aba Actions do GitHub.
 
-env:
-  AZURE_WEBAPP_NAME: your-app-name  # set this to the name of your Azure Web App
-  PYTHON_VERSION: '3.8'              # set this to the Python version to use
+env: # Variaveis compartilhadas entre os jobs.
+  AZURE_WEBAPP_NAME: lab6-10402800 # Nome EXATO do App Service existente no Azure.
+  PYTHON_VERSION: '3.14' # Mesma versao configurada no Runtime Stack do App Service.
 
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
+'on': # Eventos que disparam a execucao do workflow.
+  push: # Executa automaticamente a cada push.
+    branches: ['main'] # Observa apenas os commits feitos na branch principal.
+  workflow_dispatch: # Permite executar o pipeline manualmente pela aba Actions.
 
-permissions:
-  contents: read
+jobs: # Conjunto de tarefas executadas pelos runners do GitHub Actions.
+  build: # Primeira tarefa: preparar e validar o aplicativo antes da publicacao.
+    runs-on: ubuntu-latest # Utiliza uma maquina Linux temporaria do GitHub.
+    permissions: # Permissoes do token do GitHub neste job.
+      contents: read # Permite baixar o codigo do repositorio.
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+    steps: # Etapas do job de build, executadas na ordem apresentada.
+      - name: Baixar codigo do repositorio # Identifica a etapa nos logs.
+        uses: actions/checkout@v4 # Baixa o codigo da revisao que iniciou a execucao.
 
-    steps:
-      - uses: actions/checkout@v4
+      - name: Configurar Python # Identifica a preparacao do interpretador.
+        uses: actions/setup-python@v6 # Usa versao recente, substituindo setup-python@v3.0.0.
+        with: # Parametros fornecidos a action anterior.
+          python-version: ${{ env.PYTHON_VERSION }} # Instala o Python 3.14 neste runner.
+          # Cache pip desativado para eliminar o erro HTTP 400 observado no pipeline antigo.
 
-      - name: Set up Python version
-        uses: actions/setup-python@v3.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+      - name: Mensagem inicial do deploy # Etapa solicitada pelo exercicio 3.
+        run: echo "Iniciando o deploy do meu projeto!" # Imprime a mensagem nos logs antes do build.
 
-      - name: Create and start virtual environment
-        run: |
-          python -m venv venv
-          source venv/bin/activate
+      - name: Instalar dependencias e validar o app # Executa o processo basico de build.
+        run: | # Comandos de shell executados em uma unica etapa.
+          # Cria um ambiente virtual isolado para o projeto.
+          python -m venv antenv
+          # Ativa o ambiente virtual na sessao atual.
+          source antenv/bin/activate
+          # Instala as bibliotecas declaradas em requirements.txt.
+          python -m pip install -r requirements.txt
+          # Verifica se app.py possui erros de sintaxe Python.
+          python -m py_compile app.py
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      # Optional: Add step to run tests here (PyTest, Django test suites, etc.)
-
-      - name: Upload artifact for deployment jobs
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-app
-          path: |
+      - name: Empacotar codigo para publicacao # Disponibiliza arquivos ao job deploy.
+        uses: actions/upload-artifact@v4 # Envia arquivos entre jobs do workflow.
+        with: # Configuracoes do pacote de artefatos.
+          name: python-app # Identificador do pacote a ser recuperado no deploy.
+          path: | # Inclui o codigo, mas ignora o ambiente virtual local.
             .
+            !antenv/
             !venv/
 
-  deploy:
-    permissions:
-      contents: none
-    runs-on: ubuntu-latest
-    needs: build
-    environment:
-      name: 'Development'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+  deploy: # Segunda tarefa: autenticacao no Azure e publicacao do aplicativo.
+    needs: build # Executa somente se o job build terminar com sucesso.
+    runs-on: ubuntu-latest # Usa outro runner Linux temporario.
+    permissions: # Permissoes exigidas pela autenticacao OIDC.
+      id-token: write # Autoriza o GitHub a emitir um token de identidade para o Azure.
+      contents: read # Mantem a permissao de leitura, como no workflow original Azure.
 
-    steps:
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v4
-        with:
-          name: python-app
-          path: .
+    steps: # Etapas sequenciais da publicacao.
+      - name: Baixar pacote criado no build # Recupera o artefato armazenado pelo GitHub.
+        uses: actions/download-artifact@v4 # Restaura arquivos enviados no job anterior.
+        with: # Configuracoes do download.
+          name: python-app # Deve ser o mesmo nome usado no upload-artifact.
+          path: . # Extrai os arquivos na pasta de trabalho atual.
 
-      - name: 'Deploy to Azure Web App'
-        id: deploy-to-webapp
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+      - name: Autenticar no Azure com OIDC # Usa a identidade ja configurada pelo Azure.
+        uses: azure/login@v2 # Faz login sem armazenar senha ou Publish Profile.
+        with: # Secrets correspondentes ao workflow gerado pelo Azure anteriormente.
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_10301F11BFE942FCAD04AA936C30A871 }} # Aplicacao autorizada no Azure.
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_3F3C71F154F94499B0DD965188B73AD4 }} # Diretorio Microsoft Entra.
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_1CF44974E0BA42289BB58E2ED515FC7E }} # Assinatura Azure.
+
+      - name: Publicar no App Service # Envia o codigo ao ambiente de producao.
+        id: deploy-to-webapp # Identificador da etapa de publicacao.
+        uses: azure/webapps-deploy@v3 # Action oficial de deploy do Azure App Service.
+        with: # Parametros de destino do deploy.
+          app-name: ${{ env.AZURE_WEBAPP_NAME }} # Destino: lab6-10402800.
+          slot-name: Production # Publica no slot principal da aplicacao.
